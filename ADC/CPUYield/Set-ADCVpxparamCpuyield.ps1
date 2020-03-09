@@ -10,14 +10,18 @@
 .MODIFICATION_HISTORY
     Esther Barthel, MSc - 05/01/20 - Original code
     Esther Barthel, MSc - 05/01/20 - Standardizing script, based on the ControlUp Scripting Standards (version 0.2)
+    Esther Barthel, MSc - 03/03/20 - Adding a check only switch
+
 .LINK
-    https://support.citrix.com/article/CTX2295559
+    https://support.citrix.com/article/CTX229555
 .NOTES
-    Version:        0.1
+    Version:        0.2
     Author:         Esther Barthel, MSc
     Creation Date:  2020-01-05
     Updated:        2020-01-05
                     Standardized the function, based on the ControlUp Standards (v0.2)
+                    2020-03-03
+                    Adding a check only switch
     Purpose:        Script Action, created for ControlUp Citrix ADC Management
         
     Copyright (c) cognition IT. All rights reserved.
@@ -1079,14 +1083,24 @@ Write-Host ""
 
 ## Retrieve input parameters
 #$NSIP = $args[0]
+#$checkOnly = $args[1]
 
 ## Testing Script
 $NSIP = "192.168.56.99"
+#$checkOnly = "YES"
 
 # Initiate variables
 [System.Management.Automation.PSCredential]$adcCreds = $null
 $isVPX = $false
 $changeCpuyield = $false
+
+# Make sure CheckOnly is set to NO if not explicitly set to YES
+If ($checkOnly -ne "YES")
+{
+    $checkOnly = "NO"
+    Write-Warning "CheckOnly was not specified, so set to NO. Changes will be made by this Script Action if required."
+    Write-Output ""
+}
 
 # Step 0: Retrieve ADC Credentials
 $adcCreds = Get-ADCCredentials #-Verbose
@@ -1099,7 +1113,7 @@ If ($nshardware.hwdescription -match "Virtual")
 {
     $isVPX = $true
     Write-Host "`t=> The appliance hardware description `(""$($nshardware.hwdescription)""`) does indicate this is a VPX appliance." -ForegroundColor White
-    Write-Host "`t=> The cpuyield setting will be changed to YES." -ForegroundColor White
+    Write-Host "`t=> The cpuyield setting can be changed to improve CPU utilization." -ForegroundColor White
 
     # Step 2: Check nsversion
     Write-Host "* Step 2: Check the Citrix ADC firmware version: " -ForegroundColor Yellow -NoNewline
@@ -1136,38 +1150,47 @@ If ($nshardware.hwdescription -match "Virtual")
     {
         Switch ($adcVersion.Substring(0,2))
         {
+            "13" {
+                    Write-Host "`t=> cpuyield is currently set to " -NoNewline
+                    Write-Host "DEFAULT " -ForegroundColor Cyan
+                    Write-Host "`t   DEFAULT = NO" -NoNewline -ForegroundColor Red
+                    Write-Host " (Reserve all CPU resources for the VM to which they have been allocated. This option shows higher percentage in hypervisor for VPX CPU usage)."
+                    $changeCpuyield = $true
+                 }
             "12" {
                     Write-Host "`t=> cpuyield is currently set to " -NoNewline
                     Write-Host "DEFAULT " -ForegroundColor Cyan
-                    Write-Host "`t   (NO: Reserve all CPU resources for the VM to which they have been allocated. This option shows higher percentage in hypervisor for VPX CPU usage)."
+                    Write-Host "`t   DEFAULT = NO" -NoNewline -ForegroundColor Red
+                    Write-Host " (Reserve all CPU resources for the VM to which they have been allocated. This option shows higher percentage in hypervisor for VPX CPU usage)."
                     $changeCpuyield = $true
                  }
             default {
                     Write-Host "`t=> cpuyield is currently set to " -NoNewline
                     Write-Host "DEFAULT" -ForegroundColor Cyan
-                    Write-Host "`t (YES: Allow allocated but unused CPU resources to be used by another VM)."
+                    Write-Host "`t   DEFAULT = YES" -NoNewline -ForegroundColor Green
+                    Write-Host " (Allow allocated but unused CPU resources to be used by another VM)."
                     $changeCpuyield = $false
                 }
         }
     }
     Else
     {
-        Write-Host "`t=> cpuyield is currently set to " -NoNewline
-        Write-Host $($nsvpxparam.cpuyield) -ForegroundColor Cyan -NoNewline
-        Write-Host "."
+        Write-Host "`t=> cpuyield is currently set to: " -NoNewline
         If ($($nsvpxparam.cpuyield) -eq "YES")
         {
-            Write-Host "`t   (YES: Allow allocated but unused CPU resources to be used by another VM)."
+            Write-Host "YES " -NoNewline -ForegroundColor Green
+            Write-Host "(Allow allocated but unused CPU resources to be used by another VM)."
 
         }
         Else
         {
-            Write-Host "`t   (NO: Reserve all CPU resources for the VM to which they have been allocated. This option shows higher percentage in hypervisor for VPX CPU usage)."
+            Write-Host "NO " -NoNewline -ForegroundColor Red
+            Write-Host "(Reserve all CPU resources for the VM to which they have been allocated. This option shows higher percentage in hypervisor for VPX CPU usage)."
         }
     }
 
     # Step 4: Change the nsvpxparam cpuyield setting to YES
-    If ($changeCpuyield)
+    If (($changeCpuyield) -and (-not($checkOnly -eq "YES")))
     {
         Write-Host "* Step 4: Change cpuyield to YES: " -ForegroundColor Yellow -NoNewline
         Set-ADCNsvpxparam -NSIP $NSIP -CPUyield YES -ADCCredentials $adcCreds #-Verbose -Debug
@@ -1185,7 +1208,14 @@ If ($nshardware.hwdescription -match "Virtual")
     Else
     {
         Write-Output ""
-        Write-Host "The cpuyield setting was NOT changed by this Script Action."
+        If ($checkOnly -eq "YES")
+        {
+            Write-Host "NO changes were made as the checkOnly parameter was set to YES for this Script Action."
+        }
+        Else
+        {
+            Write-Host "The cpuyield setting was NOT changed by this Script Action."
+        }
     }
 }
 Else
